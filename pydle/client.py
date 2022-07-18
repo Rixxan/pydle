@@ -2,7 +2,6 @@
 # Basic IRC client implementation.
 import asyncio
 import logging
-from asyncio import new_event_loop, gather, get_event_loop, sleep
 import warnings
 from . import connection, protocol
 import inspect
@@ -63,15 +62,15 @@ class BasicClient:
         self._nicknames = [nickname] + (fallback_nicknames or [])
         self.username = username or nickname.lower()
         self.realname = realname or nickname
-        if eventloop:
-            self.eventloop = eventloop
-        else:
-            self.eventloop = get_event_loop()
-
-        self.own_eventloop = not eventloop
+        self.eventloop = asyncio.get_event_loop()
         self._reset_connection_attributes()
         self._reset_attributes()
-
+        if eventloop is not None:
+            warnings.warn(
+                "The eventloop argument has been deprecated, and may be removed in a future version. "
+                "Pydle uses the current asyncio event loop since 0.7, this parameter will be removed in 2.0",
+                DeprecationWarning
+            )
         if kwargs:
             self.logger.warning('Unused arguments: %s', ', '.join(kwargs.keys()))
 
@@ -147,7 +146,7 @@ class BasicClient:
         await self.on_disconnect(expected)
 
         # Shut down event loop.
-        if expected and self.own_eventloop:
+        if expected:
             self.connection.stop()
 
     async def _connect(self, hostname, port, reconnect=False, channels=None,
@@ -332,7 +331,7 @@ class BasicClient:
                     self.logger.error('Unexpected disconnect. Attempting to reconnect.')
 
                 # Wait and reconnect.
-                await sleep(delay)
+                await asyncio.sleep(delay)
                 await self.connect(reconnect=True)
             else:
                 self.logger.error('Unexpected disconnect. Giving up.')
@@ -467,8 +466,8 @@ class BasicClient:
 class ClientPool:
     """ A pool of clients that are ran and handled in parallel. """
 
-    def __init__(self, clients=None, eventloop=None):
-        self.eventloop = eventloop if eventloop else new_event_loop()
+    def __init__(self, clients=None):
+        self.eventloop = asyncio.get_event_loop()
         self.clients = set(clients or [])
         self.connect_args = {}
 
@@ -499,7 +498,7 @@ class ClientPool:
             args, kwargs = self.connect_args[client]
             connection_list.append(client.connect(*args, **kwargs))
         # single future for executing the connections
-        connections = gather(*connection_list, loop=self.eventloop)
+        connections = asyncio.gather(*connection_list)
 
         # run the connections
         self.eventloop.run_until_complete(connections)
